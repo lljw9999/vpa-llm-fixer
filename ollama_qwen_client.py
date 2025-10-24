@@ -9,10 +9,11 @@ but both can be overridden with CLI flags or environment variables.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
+from pathlib import Path
 from typing import Iterator, Optional
+import json
 
 try:
     import requests
@@ -127,6 +128,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Stream tokens as they arrive instead of waiting for the full reply.",
     )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="Number of independent responses to generate (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Optional path to write responses as JSON (saved automatically when top-k > 1).",
+    )
     return parser.parse_args(argv)
 
 
@@ -138,22 +150,57 @@ def main(argv: list[str]) -> int:
         print("No prompt provided. Pass a prompt argument or pipe text via stdin.", file=sys.stderr)
         return 1
 
-    result = chat(
-        prompt,
-        url=args.url,
-        model=args.model,
-        system_prompt=args.system_prompt,
-        stream=args.stream,
-    )
+    if args.top_k < 1:
+        print("--top-k must be at least 1.", file=sys.stderr)
+        return 1
 
-    if args.stream:
-        assert not isinstance(result, str)  # narrow type for type checkers
-        for chunk in result:
-            print(chunk, end="", flush=True)
-        print()
-    else:
+    if args.stream and args.top_k != 1:
+        print("Streaming mode only supports --top-k=1.", file=sys.stderr)
+        return 1
+
+    if args.top_k == 1 and not args.output:
+        result = chat(
+            prompt,
+            url=args.url,
+            model=args.model,
+            system_prompt=args.system_prompt,
+            stream=args.stream,
+        )
+
+        if args.stream:
+            assert not isinstance(result, str)  # narrow type for type checkers
+            for chunk in result:
+                print(chunk, end="", flush=True)
+            print()
+        else:
+            assert isinstance(result, str)
+            print(result)
+        return 0
+
+    responses = []
+    for idx in range(args.top_k):
+        result = chat(
+            prompt,
+            url=args.url,
+            model=args.model,
+            system_prompt=args.system_prompt,
+            stream=False,
+        )
         assert isinstance(result, str)
-        print(result)
+        responses.append({"index": idx, "content": result})
+
+    record = {
+        "model": args.model,
+        "url": args.url,
+        "prompt": prompt,
+        "system_prompt": args.system_prompt,
+        "count": args.top_k,
+        "responses": responses,
+    }
+
+    output_path = args.output or Path("ollama_qwen_responses.json")
+    output_path.write_text(json.dumps(record, indent=2))
+    print(f"Saved {args.top_k} responses to {output_path}")
 
     return 0
 
