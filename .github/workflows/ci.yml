@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pytest
+        pip install -e .
+        
+    - name: Run tests
+      run: |
+        # Run pytest if tests exist
+        if [ -d "tests" ] && [ "$(ls -A tests)" ]; then
+          pytest tests
+        else
+          echo "No tests found in tests/ directory"
+        fi
+        
+    - name: Test VPA package imports
+      run: |
+        # Check if key modules import correctly
+        python -c "from ollama_client import OllamaClient; print('OllamaClient import OK')"
+        python -c "from vpa.draft.generator import DraftGenerator; print('DraftGenerator import OK')"
+        python -c "from vpa.verify.checker import SimpleVerifier; print('SimpleVerifier import OK')"
+
+    - name: Run syntax checks
+      run: |
+        # Compile all Python files to check for syntax errors
+        python -m py_compile main.py
+        python -m py_compile ollama_client.py
+        python -m py_compile vpa/draft/generator.py
+        python -m py_compile vpa/verify/checker.py
+        echo "All files compile successfully"
